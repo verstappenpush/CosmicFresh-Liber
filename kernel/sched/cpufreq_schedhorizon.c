@@ -963,11 +963,4 @@ static int __init schedhorizon_init(void)
 {
 	return cpufreq_register_governor(&schedhorizon_gov);
 }
-
-static void __exit schedhorizon_exit(void)
-{
-	cpufreq_unregister_governor(&schedhorizon_gov);
-}
-
-module_init(schedhorizon_init);
-module_exit(schedhorizon_exit);
+fs_initcall(schedhorizon_init);
