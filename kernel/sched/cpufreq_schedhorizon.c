@@ -4,13 +4,15 @@
  * Copyright (C) 2016, Intel Corporation
  * Author: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
  *
+ * Copyright (C) 2020 LibXZR
+ * Changes for schedhorizon: LibXZR <xzr467706992@163.com>
+ *
+ * Copyright (C) 2025 k4ngcaribug
+ * Adapt schedhorizon for 4.14: k4ngcaribug <168145100+k4ngcaribug@users.noreply.github.com>
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
- *
- * Base From schedutil cpufreq_govenor  
- *
- * Backported By DenomSly For k4.14 Redmi Note 10 Pro 
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -21,18 +23,17 @@
 #include <trace/events/power.h>
 #include <linux/sched/sysctl.h>
 #include "sched.h"
-#include <linux/binfmts.h>
 #include "tune.h"
 
 #define SUGOV_KTHREAD_PRIORITY	50
 
 /* Define default efficient frequencies for big and LITTLE cores */
-static unsigned int default_efficient_freq_lp[] = {CONFIG_SCHEDHORIZON_DEFAULT_EFFICIENT_FREQ_LP};
-static unsigned int default_efficient_freq_perf[] = {CONFIG_SCHEDHORIZON_DEFAULT_EFFICIENT_FREQ_HP};
+static unsigned int default_efficient_freq_lp[] = {1708800};
+static unsigned int default_efficient_freq_perf[] = {1324800};
 
 /* Define default up delays for big and LITTLE cores */
-static unsigned int default_up_delay_lp[] = {CONFIG_SCHEDHORIZON_DEFAULT_UP_DELAY_LP};
-static unsigned int default_up_delay_perf[] = {CONFIG_SCHEDHORIZON_DEFAULT_UP_DELAY_HP};
+static unsigned int default_up_delay_lp[] = {100};
+static unsigned int default_up_delay_perf[] = {100};
 
 struct sugov_tunables {
 	struct gov_attr_set attr_set;
@@ -256,7 +257,12 @@ static void sugov_get_util(unsigned long *util, unsigned long *max, int cpu)
 	*util = min(rq->cfs.avg.util_avg, cfs_max);
 	*max = cfs_max;
 
+#ifdef CONFIG_SCHED_WALT
 	*util = boosted_cpu_util(cpu, &loadcpu->walt_load);
+#endif
+#ifdef CONFIG_UCLAMP_TASK
+	*util = uclamp_util_with(rq, *util, NULL);
+#endif
 }
 
 #ifdef CONFIG_NO_HZ_COMMON
@@ -507,6 +513,7 @@ static ssize_t up_rate_limit_us_store(struct gov_attr_set *attr_set,
 	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
 	struct sugov_policy *sg_policy;
 	unsigned int rate_limit_us;
+
 	if (kstrtouint(buf, 10, &rate_limit_us))
 		return -EINVAL;
 
@@ -526,6 +533,7 @@ static ssize_t down_rate_limit_us_store(struct gov_attr_set *attr_set,
 	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
 	struct sugov_policy *sg_policy;
 	unsigned int rate_limit_us;
+
 	if (kstrtouint(buf, 10, &rate_limit_us))
 		return -EINVAL;
 
@@ -785,29 +793,12 @@ static int sugov_init(struct cpufreq_policy *policy)
 
 	/*
 	 * NOTE:
-	 * intializing up_rate/down_rate to 0 explicitly in kernel
+	 * intializing up_rate/down_rate explicitly in kernel
 	 * since WALT expects so by default.
 	 */
-    
-    tunables->up_rate_limit_us =
-				cpufreq_policy_transition_delay_us(policy);
-	tunables->down_rate_limit_us =
-				cpufreq_policy_transition_delay_us(policy);
-		
-    if (cpumask_test_cpu(policy->cpu, cpu_perf_mask)) {
-		tunables->up_rate_limit_us =
-					CONFIG_SCHEDHORIZON_DEFAULT_UP_RATE_LIMIT_HP;
-		tunables->down_rate_limit_us =
-					CONFIG_SCHEDHORIZON_DEFAULT_DOWN_RATE_LIMIT_HP;
-	}
-        	
-	if (cpumask_test_cpu(policy->cpu, cpu_lp_mask)) {
-		tunables->up_rate_limit_us =
-					CONFIG_SCHEDHORIZON_DEFAULT_UP_RATE_LIMIT_LP;
-		tunables->down_rate_limit_us =
-					CONFIG_SCHEDHORIZON_DEFAULT_DOWN_RATE_LIMIT_LP;
-	}
-	
+	tunables->up_rate_limit_us = 500;
+	tunables->down_rate_limit_us = 20000;
+
 	if (cpumask_test_cpu(sg_policy->policy->cpu, cpu_lp_mask)) {
 		tunables->efficient_freq = default_efficient_freq_lp;
     	tunables->nefficient_freq = ARRAY_SIZE(default_efficient_freq_lp);
@@ -959,8 +950,8 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 }
 #endif
 
-static int __init schedhorizon_init(void)
+static int __init sugov_register(void)
 {
 	return cpufreq_register_governor(&schedhorizon_gov);
 }
-fs_initcall(schedhorizon_init);
+fs_initcall(sugov_register);
