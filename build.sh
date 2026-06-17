@@ -9,7 +9,6 @@ RED='\033[01;31m'
 RST='\033[0m'
 ORIGIN_DIR=$(pwd)
 TOOLCHAIN=$ORIGIN_DIR/build-shit
-CLANG_DIR=$TOOLCHAIN/proton-clang
 NEUTRON_DIR=$TOOLCHAIN/neutron-clang
 IMAGE=$ORIGIN_DIR/out/arch/arm64/boot/Image.gz
 LOG=$ORIGIN_DIR/out/log.txt
@@ -128,16 +127,14 @@ choose_toolchain() {
     script_echo "============================================================"
     script_echo "  Selecione a toolchain para compilar:"
     script_echo "  1) GCC (KenHV gcc-arm64 + gcc-arm)"
-    script_echo "  2) Proton Clang 13"
-    script_echo "  3) Neutron Clang (recomendado)"
+    script_echo "  2) Neutron Clang (recomendado)"
     script_echo "============================================================"
     echo -e "${RST}"
-    read -p "  Opção [1/2/3]: " TC_CHOICE
+    read -p "  Opção [1/2]: " TC_CHOICE
 
     case "$TC_CHOICE" in
         1) TOOLCHAIN_TYPE="GCC" ;;
-        2) TOOLCHAIN_TYPE="CLANG" ;;
-        3) TOOLCHAIN_TYPE="NEUTRON" ;;
+        2) TOOLCHAIN_TYPE="NEUTRON" ;;
         *)
             script_echo "Opção inválida, usando Neutron Clang por padrão."
             TOOLCHAIN_TYPE="NEUTRON"
@@ -160,14 +157,6 @@ add_deps() {
                 cd "$TOOLCHAIN" || exit
                 git clone https://github.com/KenHV/gcc-arm64.git --single-branch -b master --depth=1 2>&1 | sed 's/^/     /'
                 git clone https://github.com/KenHV/gcc-arm.git --single-branch -b master --depth=1 2>&1 | sed 's/^/     /'
-                cd "$ORIGIN_DIR" || exit
-            fi
-            ;;
-        CLANG)
-            if [ ! -d "$CLANG_DIR" ]; then
-                script_echo "Baixando Proton Clang..."
-                cd "$TOOLCHAIN" || exit
-                git clone https://github.com/kdrag0n/proton-clang.git --single-branch -b master --depth=1 2>&1 | sed 's/^/     /'
                 cd "$ORIGIN_DIR" || exit
             fi
             ;;
@@ -209,34 +198,6 @@ verify_toolchain_install() {
                 add_deps
             fi
             ;;
-        CLANG)
-            if [[ -d "${CLANG_DIR}" ]]; then
-                script_echo "I: Proton Clang encontrado"
-                export PATH="${CLANG_DIR}/bin:${PATH}"
-                export LD=ld.lld
-
-                # FIX: Substitui o ld bundlado do Proton (incompatível com glibc moderno / erro .relr.dyn)
-                if [ -f "${CLANG_DIR}/bin/ld" ] && [ ! -f "${CLANG_DIR}/bin/ld.old" ]; then
-                    script_echo "I: Substituindo ld do Proton Clang por lld do sistema..."
-                    mv "${CLANG_DIR}/bin/ld" "${CLANG_DIR}/bin/ld.old"
-                    ln -sf "$(which ld.lld)" "${CLANG_DIR}/bin/ld"
-                fi
-
-                install_binutils
-
-                CLANG_BIN=$(which clang)
-                if [[ "$CLANG_BIN" != "${CLANG_DIR}/bin/clang" ]]; then
-                    script_echo "E: clang não está apontando para o Proton Clang!"
-                    script_echo "   Esperado: ${CLANG_DIR}/bin/clang"
-                    script_echo "   Encontrado: $CLANG_BIN"
-                    exit_script
-                fi
-                script_echo "I: clang -> $CLANG_BIN"
-            else
-                script_echo "E: Proton Clang não encontrado, tentando baixar..."
-                add_deps
-            fi
-            ;;
         NEUTRON)
             if [[ -d "${NEUTRON_DIR}" ]]; then
                 script_echo "I: Neutron Clang encontrado"
@@ -270,12 +231,12 @@ build_kernel_image() {
     script_echo "Building CosmicFresh Kernel For $DEVICE com $TOOLCHAIN_TYPE"
 
     case "$TOOLCHAIN_TYPE" in
-        GCC)           MAKE=("${MAKE_GCC[@]}") ;;
-        CLANG|NEUTRON) MAKE=("${MAKE_CLANG[@]}") ;;
+        GCC)     MAKE=("${MAKE_GCC[@]}") ;;
+        NEUTRON) MAKE=("${MAKE_CLANG[@]}") ;;
     esac
 
     # Aplica patches de compatibilidade Clang antes de compilar
-    if [[ "$TOOLCHAIN_TYPE" == "CLANG" || "$TOOLCHAIN_TYPE" == "NEUTRON" ]]; then
+    if [[ "$TOOLCHAIN_TYPE" == "NEUTRON" ]]; then
         apply_clang_patches
     fi
 
