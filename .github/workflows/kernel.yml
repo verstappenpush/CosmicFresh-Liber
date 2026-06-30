@@ -28,6 +28,10 @@ on:
         required: true
         default: "false"
         type: boolean
+      avg_build_minutes:
+        description: "Tempo médio de build em minutos (só pra calibrar a barra de progresso)"
+        required: true
+        default: "25"
 
 jobs:
   build:
@@ -42,7 +46,6 @@ jobs:
       - name: Limpar KernelSU-Next antigo
         run: |
           if [ -d "KernelSU-Next" ]; then
-            # remove .git aninhado (gitlink/submódulo) que costuma travar o rm
             find KernelSU-Next -name ".git" -exec rm -rf {} + 2>/dev/null || true
             chmod -R u+w KernelSU-Next 2>/dev/null || true
             rm -rf KernelSU-Next || sudo rm -rf KernelSU-Next
@@ -56,7 +59,6 @@ jobs:
             echo "I: Integrando KernelSU-Next (legacy)..."
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-            # Garante que o defconfig tenha CONFIG_KSU=y
             if [ -f "$DEFCONFIG" ]; then
               sed -i '/CONFIG_KSU/d' "$DEFCONFIG"
               echo "CONFIG_KSU=y" >> "$DEFCONFIG"
@@ -76,6 +78,7 @@ jobs:
           fi
 
       - name: Avisar início da build no Telegram
+        id: notify_start
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -98,12 +101,18 @@ jobs:
           KernelSU: $KSU_WANTED
           Disparado por: ${{ github.actor }}
           Branch/Ref: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}"
+          Commit: ${{ github.sha }}
 
-          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+          ░░░░░░░░░░░░░░░░░░░░ 0%
+          ⏳ Aguardando início da compilação..."
+
+          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
             -d chat_id="$CHAT_ID" \
             -d parse_mode="Markdown" \
-            --data-urlencode text="$TEXT"
+            --data-urlencode text="$TEXT")
+
+          MSG_ID=$(echo "$RESPONSE" | jq -r '.result.message_id // empty')
+          echo "tg_message_id=$MSG_ID" >> "$GITHUB_OUTPUT"
 
       - name: Instalar dependências
         run: |
@@ -113,34 +122,97 @@ jobs:
       - name: Dar permissão de execução ao build.sh
         run: chmod +x build.sh
 
-      - name: Buildar kernel
+      - name: Buildar kernel (com progresso no Telegram)
         id: build
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MSG_ID: ${{ steps.notify_start.outputs.tg_message_id }}
+          AVG_MINUTES: ${{ inputs.avg_build_minutes }}
         run: |
           chmod +x build.sh
 
-          START_TIME=$(date +%s)
-
-          # Monta o argumento do build.sh (EGIS aciona o sensor Egistec,
-          # qualquer outra coisa cai no FPC, que é o default do script)
           FP_ARG=""
           if [ "${{ inputs.fp_model }}" = "EGIS" ]; then
             FP_ARG="EGIS"
           fi
 
-          # build.sh pergunta interativamente: 1) toolchain  2) versão do kernel
-          # então respondemos via stdin com as escolhas do workflow_dispatch
+          START_TIME=$(date +%s)
+          AVG_SECONDS=$((AVG_MINUTES * 60))
+
+          # FIFO pra alimentar o build.sh interativo sem bloquear o background
+          mkfifo build_input.fifo
+          ( printf "%s\n%s\n" "${{ inputs.toolchain }}" "${{ inputs.kernel_version }}" > build_input.fifo ) &
+
           set +e
-          printf "%s\n%s\n" "${{ inputs.toolchain }}" "${{ inputs.kernel_version }}" \
-            | ./build.sh $FP_ARG 2>&1 | tee build_output.log
-          BUILD_EXIT=${PIPESTATUS[0]}
+          ./build.sh $FP_ARG < build_input.fifo > build_output.log 2>&1 &
+          BUILD_PID=$!
           set -e
+
+          # ---- Loop de progresso ----
+          update_telegram() {
+            local percent="$1"
+            local status_line="$2"
+
+            local now elapsed elapsed_fmt filled empty bar
+            now=$(date +%s)
+            elapsed=$((now - START_TIME))
+            elapsed_fmt=$(printf '%02dm%02ds' $((elapsed/60)) $((elapsed%60)))
+
+            filled=$((percent / 5))
+            empty=$((20 - filled))
+            bar=$(printf '▓%.0s' $(seq 1 $filled) 2>/dev/null)
+            bar+=$(printf '░%.0s' $(seq 1 $empty) 2>/dev/null)
+
+            local text="🔧 Build em andamento — CosmicFresh Kernel (R${{ inputs.kernel_version }})
+
+          ${bar} ${percent}%
+          ⏱ Tempo decorrido: ${elapsed_fmt}
+          📄 ${status_line}"
+
+            [ -n "$MSG_ID" ] && curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/editMessageText" \
+              -d chat_id="$CHAT_ID" \
+              -d message_id="$MSG_ID" \
+              --data-urlencode text="$text" > /dev/null || true
+          }
+
+          while kill -0 "$BUILD_PID" 2>/dev/null; do
+            sleep 20
+
+            NOW=$(date +%s)
+            ELAPSED=$((NOW - START_TIME))
+
+            # progresso assintótico: sobe rápido no início, desacelera, trava em 90%
+            # até o build terminar de verdade (evita "mentir" que chegou a 100% antes da hora)
+            PERCENT=$(python3 -c "
+          import math
+          elapsed = $ELAPSED
+          avg = $AVG_SECONDS
+          p = 90 * (1 - math.exp(-elapsed/avg))
+          print(int(min(90, p)))
+          ")
+
+            LAST_LINE=$(tail -n 5 build_output.log 2>/dev/null | grep -v '^\s*$' | tail -n 1 | tr -d '\r' | cut -c1-90)
+            [ -z "$LAST_LINE" ] && LAST_LINE="Compilando..."
+
+            update_telegram "$PERCENT" "$LAST_LINE"
+          done
+
+          wait "$BUILD_PID"
+          BUILD_EXIT=$?
 
           END_TIME=$(date +%s)
           BUILD_SECONDS=$((END_TIME - START_TIME))
-          BUILD_TIME_FMT=$(printf '%02dm%02ds\n' $((BUILD_SECONDS/60)) $((BUILD_SECONDS%60)))
+          BUILD_TIME_FMT=$(printf '%02dm%02ds' $((BUILD_SECONDS/60)) $((BUILD_SECONDS%60)))
 
           echo "build_time=$BUILD_TIME_FMT" >> "$GITHUB_OUTPUT"
           echo "build_exit=$BUILD_EXIT" >> "$GITHUB_OUTPUT"
+
+          if [ "$BUILD_EXIT" -eq 0 ]; then
+            update_telegram 100 "✅ Compilação finalizada, preparando pacote..."
+          else
+            update_telegram "$PERCENT" "❌ Build falhou (exit $BUILD_EXIT), veja o log."
+          fi
 
           # Descobre qual clang/toolchain foi de fato usado, lendo o log
           if grep -q "clang -> " build_output.log; then
