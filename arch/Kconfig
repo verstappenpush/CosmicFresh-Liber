@@ -96,6 +96,14 @@ config OPTPROBES
 	depends on KPROBES && HAVE_OPTPROBES
 	select TASKS_RCU if PREEMPT
 
+config LLVM_POLLY
+	bool "Enable LLVM's polyhedral loop optimizer (Polly)"
+	help
+	  This option enables LLVM's polyhedral loop optimizer known as Polly.
+	  Polly is able to optimize various loops throughout the kernel for
+	  maximum cache locality. This requires an LLVM toolchain explicitly
+	  compiled with Polly support.
+
 config KPROBES_ON_FTRACE
 	def_bool y
 	depends on KPROBES && HAVE_KPROBES_ON_FTRACE
