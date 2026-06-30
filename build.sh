@@ -58,7 +58,7 @@ MAKE_CLANG+=(
 # export environment variables
 export_env_vars() {
     export KBUILD_BUILD_USER=thiago
-    export KBUILD_BUILD_HOST=amoruivas
+    export KBUILD_BUILD_HOST=amoruivas_loirinhas
     export ARCH=arm64
 
     # CCACHE
