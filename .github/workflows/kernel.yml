@@ -23,6 +23,11 @@ on:
         options:
           - "FPC"
           - "EGIS"
+      enable_ksu:
+        description: "Integrar KernelSU-Next?"
+        required: true
+        default: "false"
+        type: boolean
 
 jobs:
   build:
@@ -33,6 +38,33 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Configurar KernelSU-Next
+        run: |
+          DEFCONFIG="arch/arm64/configs/odessa_defconfig"
+
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            echo "I: Integrando KernelSU-Next (legacy)..."
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+
+            # Garante que o defconfig tenha CONFIG_KSU=y
+            if [ -f "$DEFCONFIG" ]; then
+              sed -i '/CONFIG_KSU/d' "$DEFCONFIG"
+              echo "CONFIG_KSU=y" >> "$DEFCONFIG"
+              echo "I: CONFIG_KSU=y adicionado em $DEFCONFIG"
+            else
+              echo "W: $DEFCONFIG não encontrado, não foi possível setar CONFIG_KSU=y"
+            fi
+          else
+            echo "I: KSU desabilitado, removendo CONFIG_KSU de $DEFCONFIG..."
+            if [ -f "$DEFCONFIG" ]; then
+              sed -i '/CONFIG_KSU/d' "$DEFCONFIG"
+              echo "# CONFIG_KSU is not set" >> "$DEFCONFIG"
+              echo "I: CONFIG_KSU desativado em $DEFCONFIG"
+            else
+              echo "W: $DEFCONFIG não encontrado, nada a desativar"
+            fi
+          fi
 
       - name: Instalar dependências
         run: |
@@ -83,11 +115,13 @@ jobs:
           echo "clang_used=$CLANG_USED" >> "$GITHUB_OUTPUT"
 
           # Verifica se o kernel tem KernelSU integrado
-          KSU_STATUS="Não detectado"
-          if [ -d "KernelSU" ] || [ -d "drivers/kernelsu" ]; then
-            KSU_STATUS="Detectado (diretório KernelSU presente)"
-          elif grep -rq "CONFIG_KSU=y" out/.config 2>/dev/null; then
-            KSU_STATUS="Detectado (CONFIG_KSU=y no .config)"
+          KSU_STATUS="Desativado"
+          if [ -d "KernelSU-Next" ] || [ -d "KernelSU" ] || [ -d "drivers/kernelsu" ]; then
+            if grep -q "^CONFIG_KSU=y" arch/arm64/configs/odessa_defconfig 2>/dev/null; then
+              KSU_STATUS="Ativado (KernelSU-Next)"
+            else
+              KSU_STATUS="Fonte presente, mas CONFIG_KSU não está ativo"
+            fi
           fi
           echo "ksu_status=$KSU_STATUS" >> "$GITHUB_OUTPUT"
 
