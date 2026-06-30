@@ -145,7 +145,7 @@ jobs:
           ( printf "%s\n%s\n" "${{ inputs.toolchain }}" "${{ inputs.kernel_version }}" > build_input.fifo ) &
 
           set +e
-          ./build.sh $FP_ARG < build_input.fifo > build_output.log 2>&1 &
+          ./build.sh $FP_ARG < build_input.fifo > >(tee build_output.log) 2>&1 &
           BUILD_PID=$!
           set -e
 
