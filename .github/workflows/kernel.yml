@@ -66,6 +66,36 @@ jobs:
             fi
           fi
 
+      - name: Avisar início da build no Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          TOOLCHAIN_NAME="GCC"
+          if [ "${{ inputs.toolchain }}" = "2" ]; then
+            TOOLCHAIN_NAME="Neutron Clang"
+          fi
+
+          KSU_WANTED="Desativado"
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            KSU_WANTED="Ativado (KernelSU-Next)"
+          fi
+
+          TEXT="🚀 *Build iniciada — CosmicFresh Kernel*
+          Device: odessa
+          Versão: R${{ inputs.kernel_version }}
+          Toolchain selecionada: $TOOLCHAIN_NAME
+          FP Model: ${{ inputs.fp_model }}
+          KernelSU: $KSU_WANTED
+          Disparado por: ${{ github.actor }}
+          Branch/Ref: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}"
+
+          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+            -d chat_id="$CHAT_ID" \
+            -d parse_mode="Markdown" \
+            --data-urlencode text="$TEXT"
+
       - name: Instalar dependências
         run: |
           chmod +x setupbuild.sh
