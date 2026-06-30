@@ -116,8 +116,8 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          chmod +x buildsetup.sh
-          ./buildsetup.sh
+          chmod +x setupbuild.sh
+          ./setupbuild.sh
 
       - name: Dar permissão de execução ao build.sh
         run: chmod +x build.sh
