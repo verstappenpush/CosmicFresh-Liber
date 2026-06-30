@@ -1,0 +1,141 @@
+name: Build CosmicFresh Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: "Toolchain (1=GCC, 2=Neutron Clang)"
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+      kernel_version:
+        description: "Versão do Kernel (KV)"
+        required: true
+        default: "1"
+      fp_model:
+        description: "Sensor de digital"
+        required: true
+        default: "FPC"
+        type: choice
+        options:
+          - "FPC"
+          - "EGIS"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout do kernel
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Instalar dependências
+        run: |
+          chmod +x setup-build-deps.sh
+          ./setup-build-deps.sh
+
+      - name: Dar permissão de execução ao build.sh
+        run: chmod +x build.sh
+
+      - name: Buildar kernel
+        id: build
+        run: |
+          chmod +x build.sh
+
+          START_TIME=$(date +%s)
+
+          # Monta o argumento do build.sh (EGIS aciona o sensor Egistec,
+          # qualquer outra coisa cai no FPC, que é o default do script)
+          FP_ARG=""
+          if [ "${{ inputs.fp_model }}" = "EGIS" ]; then
+            FP_ARG="EGIS"
+          fi
+
+          # build.sh pergunta interativamente: 1) toolchain  2) versão do kernel
+          # então respondemos via stdin com as escolhas do workflow_dispatch
+          set +e
+          printf "%s\n%s\n" "${{ inputs.toolchain }}" "${{ inputs.kernel_version }}" \
+            | ./build.sh $FP_ARG 2>&1 | tee build_output.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          END_TIME=$(date +%s)
+          BUILD_SECONDS=$((END_TIME - START_TIME))
+          BUILD_TIME_FMT=$(printf '%02dm%02ds\n' $((BUILD_SECONDS/60)) $((BUILD_SECONDS%60)))
+
+          echo "build_time=$BUILD_TIME_FMT" >> "$GITHUB_OUTPUT"
+          echo "build_exit=$BUILD_EXIT" >> "$GITHUB_OUTPUT"
+
+          # Descobre qual clang/toolchain foi de fato usado, lendo o log
+          if grep -q "clang -> " build_output.log; then
+            CLANG_USED=$(grep "clang -> " build_output.log | tail -1 | sed 's/.*clang -> //')
+            CLANG_USED="Neutron Clang ($CLANG_USED)"
+          elif grep -q "GCC encontrado" build_output.log; then
+            CLANG_USED="GCC (KenHV gcc-arm64/gcc-arm)"
+          else
+            CLANG_USED="Não identificado (ver log)"
+          fi
+          echo "clang_used=$CLANG_USED" >> "$GITHUB_OUTPUT"
+
+          # Verifica se o kernel tem KernelSU integrado
+          KSU_STATUS="Não detectado"
+          if [ -d "KernelSU" ] || [ -d "drivers/kernelsu" ]; then
+            KSU_STATUS="Detectado (diretório KernelSU presente)"
+          elif grep -rq "CONFIG_KSU=y" out/.config 2>/dev/null; then
+            KSU_STATUS="Detectado (CONFIG_KSU=y no .config)"
+          fi
+          echo "ksu_status=$KSU_STATUS" >> "$GITHUB_OUTPUT"
+
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "Build falhou, veja build_output.log"
+            exit "$BUILD_EXIT"
+          fi
+
+      - name: Localizar zip gerado
+        id: findzip
+        if: always()
+        run: |
+          ZIP_PATH=$(find CosmicFresh -maxdepth 1 -name "CosmicFresh-*.zip" | head -1 || true)
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Enviar zip para o Telegram
+        if: ${{ steps.findzip.outputs.zip_path != '' }}
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          CAPTION="🛠 *CosmicFresh Kernel Build*
+          Device: odessa
+          Versão: R${{ inputs.kernel_version }}
+          Toolchain: ${{ steps.build.outputs.clang_used }}
+          FP Model: ${{ inputs.fp_model }}
+          Tempo de build: ${{ steps.build.outputs.build_time }}
+          KernelSU: ${{ steps.build.outputs.ksu_status }}"
+
+          curl -s -F document=@"${{ steps.findzip.outputs.zip_path }}" \
+            -F chat_id="$CHAT_ID" \
+            -F parse_mode="Markdown" \
+            -F caption="$CAPTION" \
+            "https://api.telegram.org/bot$BOT_TOKEN/sendDocument"
+
+      - name: Avisar falha no Telegram
+        if: ${{ failure() }}
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+            -d chat_id="$CHAT_ID" \
+            -d text="❌ Build do CosmicFresh Kernel (R${{ inputs.kernel_version }}) falhou. Confira o log no Actions."
+
+      - name: Upload do log como artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_output.log
