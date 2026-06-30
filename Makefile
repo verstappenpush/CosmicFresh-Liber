@@ -722,6 +722,18 @@ else
 KBUILD_CFLAGS   += -O3
 endif
 
+ifeq ($(CONFIG_LLVM_POLLY), y)
+KBUILD_CFLAGS	+= -mllvm -polly \
+		   -mllvm -polly-run-inliner \
+		   -mllvm -polly-reschedule=1 \
+		   -mllvm -polly-loopfusion-greedy=1 \
+		   -mllvm -polly-postopts=1 \
+		   -mllvm -polly-ast-use-context \
+		   -mllvm -polly-detect-keep-going \
+		   -mllvm -polly-vectorizer=stripmine \
+		   -mllvm -polly-invariant-load-hoisting
+endif
+
 ifeq ($(cc-name),gcc)
 KBUILD_CFLAGS	+= -mcpu=cortex-a76+crc+crypto -mtune=cortex-a76 -march=armv8.2-a+crc+crypto+dotprod
 endif
