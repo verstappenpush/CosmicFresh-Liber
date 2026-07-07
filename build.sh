@@ -121,6 +121,25 @@ apply_clang_patches() {
         script_echo "W: [FIX 3] ce_service_legacy.c não encontrado, pulando..."
     fi
 
+    # FIX 4 (só Yuki Clang): essa build tem Polly forçado por padrão em -O3
+    # ("-mllvm -polly" embutido no driver), e o Polly dá assertion failure
+    # (SCEVValidator) analisando lib/decompress_unlzma.c. É crash real do
+    # compilador (LLVM git + assertions), não do kernel. Desabilitamos Polly
+    # só nesse arquivo pra não travar o build inteiro.
+    if [[ "$TOOLCHAIN_TYPE" == "YUKI" ]]; then
+        LIB_MK="$ORIGIN_DIR/lib/Makefile"
+        if [ -f "$LIB_MK" ]; then
+            if ! grep -q "decompress_unlzma.o += -mllvm -polly=false" "$LIB_MK"; then
+                echo 'CFLAGS_decompress_unlzma.o += -mllvm -polly=false' >> "$LIB_MK"
+                script_echo "I: [FIX 4] Polly desativado só em lib/decompress_unlzma.o (workaround p/ ICE do Yuki Clang)"
+            else
+                script_echo "I: [FIX 4] Workaround do Polly já presente em lib/Makefile"
+            fi
+        else
+            script_echo "W: [FIX 4] lib/Makefile não encontrado, não foi possível aplicar o workaround do Polly"
+        fi
+    fi
+
     script_echo "I: Patches aplicados com sucesso"
 }
 
