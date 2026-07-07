@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       toolchain:
-        description: "Toolchain (1=GCC, 2=Neutron Clang)"
+        description: "Toolchain (1=GCC, 2=Neutron Clang, 3=Yuki Clang +BOLT)"
         required: true
         default: "2"
         type: choice
         options:
           - "1"
           - "2"
+          - "3"
       kernel_version:
         description: "Versão do Kernel (KV)"
         required: true
@@ -86,6 +87,8 @@ jobs:
           TOOLCHAIN_NAME="GCC"
           if [ "${{ inputs.toolchain }}" = "2" ]; then
             TOOLCHAIN_NAME="Neutron Clang"
+          elif [ "${{ inputs.toolchain }}" = "3" ]; then
+            TOOLCHAIN_NAME="Yuki Clang +BOLT (23.0.0git)"
           fi
 
           KSU_WANTED="Desativado"
@@ -215,15 +218,28 @@ jobs:
           fi
 
           # Descobre qual clang/toolchain foi de fato usado, lendo o log
+          # (Neutron e Yuki imprimem a mesma linha "clang -> <path>", então
+          # diferenciamos pelo caminho do binário)
           if grep -q "clang -> " build_output.log; then
             CLANG_PATH=$(grep "clang -> " build_output.log | tail -1 | sed 's/.*clang -> //')
             if [ -x "$CLANG_PATH" ]; then
-              CLANG_VER=$("$CLANG_PATH" --version | head -1 | grep -oP '(?<=clang version )[0-9]+(\.[0-9]+)*' || true)
+              CLANG_VER=$("$CLANG_PATH" --version | head -1 | grep -oP '(?<=clang version )[0-9]+(\.[0-9]+)*(git)?' || true)
             fi
+
+            case "$CLANG_PATH" in
+              */yuki-clang/*)
+                CLANG_USED="Yuki Clang +BOLT"
+                ;;
+              */neutron-clang/*)
+                CLANG_USED="Neutron Clang"
+                ;;
+              *)
+                CLANG_USED="Clang (toolchain não identificada pelo path)"
+                ;;
+            esac
+
             if [ -n "$CLANG_VER" ]; then
-              CLANG_USED="Neutron Clang $CLANG_VER"
-            else
-              CLANG_USED="Neutron Clang"
+              CLANG_USED="$CLANG_USED $CLANG_VER"
             fi
           elif grep -q "GCC encontrado" build_output.log; then
             CLANG_USED="GCC (KenHV gcc-arm64/gcc-arm)"
