@@ -252,6 +252,19 @@ verify_toolchain_install() {
         YUKI)
             if [[ -d "${YUKI_DIR}" ]]; then
                 script_echo "I: Yuki Clang +BOLT encontrado"
+
+                # FIX: o binário "ld" que vem junto com essa toolchain não é o
+                # ld.lld — é um ld genérico que só reconhece emulações de host
+                # x86_64/i386 ("unrecognised emulation mode: armelf_linux_eabi").
+                # Como o clang, em alguns passos (ex: vdso32), invoca "ld" puro
+                # em vez de "ld.lld", forçamos o symlink pra evitar isso.
+                if [ -f "${YUKI_DIR}/bin/ld.lld" ]; then
+                    script_echo "I: Corrigindo bin/ld -> ld.lld (evita erro de emulação armelf_linux_eabi)"
+                    ln -sf ld.lld "${YUKI_DIR}/bin/ld"
+                else
+                    script_echo "W: ld.lld não encontrado em ${YUKI_DIR}/bin, não foi possível aplicar o fix"
+                fi
+
                 export PATH="${YUKI_DIR}/bin:${PATH}"
                 export LD=ld.lld
 
