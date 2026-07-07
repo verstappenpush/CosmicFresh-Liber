@@ -58,7 +58,7 @@ jobs:
 
           if [ "${{ inputs.enable_ksu }}" = "true" ]; then
             echo "I: Integrando KernelSU-Next (legacy)..."
-            curl -LSs "https://raw.githubusercontent.com/verstappenpush/KernelSU-Next/refs/heads/legacy/kernel/setup.sh" | bash -s legacy
+            git clone https://github.com/verstappenpush/KernelSU-Next.git -b legacy KernelSU-Next && bash KernelSU-Next/kernel/setup.sh
 
             if [ -f "$DEFCONFIG" ]; then
               sed -i '/CONFIG_KSU/d' "$DEFCONFIG"
