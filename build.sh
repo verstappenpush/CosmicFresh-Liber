@@ -10,6 +10,8 @@ RST='\033[0m'
 ORIGIN_DIR=$(pwd)
 TOOLCHAIN=$ORIGIN_DIR/build-shit
 NEUTRON_DIR=$TOOLCHAIN/neutron-clang
+YUKI_DIR=$TOOLCHAIN/yuki-clang
+YUKI_URL="https://usc1.contabostorage.com/ab57618a161b456a8d009c2e2de4a408:xperience/toolchains/yuki-clang-+bolt-20260610.tar.zst"
 IMAGE=$ORIGIN_DIR/out/arch/arm64/boot/Image.gz
 LOG=$ORIGIN_DIR/out/log.txt
 DEVICE=odessa
@@ -128,13 +130,15 @@ choose_toolchain() {
     script_echo "  Selecione a toolchain para compilar:"
     script_echo "  1) GCC (KenHV gcc-arm64 + gcc-arm)"
     script_echo "  2) Neutron Clang (recomendado)"
+    script_echo "  3) Yuki Clang +BOLT (23.0.0git, +bolt +pgo +lto +polly)"
     script_echo "============================================================"
     echo -e "${RST}"
-    read -p "  Opção [1/2]: " TC_CHOICE
+    read -p "  Opção [1/2/3]: " TC_CHOICE
 
     case "$TC_CHOICE" in
         1) TOOLCHAIN_TYPE="GCC" ;;
         2) TOOLCHAIN_TYPE="NEUTRON" ;;
+        3) TOOLCHAIN_TYPE="YUKI" ;;
         *)
             script_echo "Opção inválida, usando Neutron Clang por padrão."
             TOOLCHAIN_TYPE="NEUTRON"
@@ -166,6 +170,32 @@ add_deps() {
                 mkdir -p "$NEUTRON_DIR"
                 cd "$NEUTRON_DIR" || exit
                 bash <(curl -s https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman) -S 2>&1 | sed 's/^/     /'
+                cd "$ORIGIN_DIR" || exit
+            fi
+            ;;
+        YUKI)
+            if [ ! -d "$YUKI_DIR" ]; then
+                script_echo "Baixando Yuki Clang +BOLT (23.0.0git)..."
+                mkdir -p "$YUKI_DIR"
+                cd "$YUKI_DIR" || exit
+
+                if ! command -v zstd &>/dev/null; then
+                    script_echo "I: Instalando zstd (necessário pra extrair .tar.zst)..."
+                    sudo apt-get update -qq 2>&1 | sed 's/^/     /'
+                    sudo apt-get install -y zstd 2>&1 | sed 's/^/     /'
+                fi
+
+                script_echo "I: Baixando de $YUKI_URL"
+                if ! curl -LSs --fail -o yuki-clang.tar.zst "$YUKI_URL"; then
+                    script_echo "E: Falha ao baixar Yuki Clang, abortando."
+                    cd "$ORIGIN_DIR" || exit
+                    rmdir "$YUKI_DIR" 2>/dev/null || true
+                    exit_script
+                fi
+
+                script_echo "I: Extraindo toolchain..."
+                tar --use-compress-program=unzstd -xf yuki-clang.tar.zst 2>&1 | sed 's/^/     /'
+                rm -f yuki-clang.tar.zst
                 cd "$ORIGIN_DIR" || exit
             fi
             ;;
@@ -219,6 +249,27 @@ verify_toolchain_install() {
                 add_deps
             fi
             ;;
+        YUKI)
+            if [[ -d "${YUKI_DIR}" ]]; then
+                script_echo "I: Yuki Clang +BOLT encontrado"
+                export PATH="${YUKI_DIR}/bin:${PATH}"
+                export LD=ld.lld
+
+                install_binutils
+
+                CLANG_BIN=$(which clang)
+                if [[ "$CLANG_BIN" != "${YUKI_DIR}/bin/clang" ]]; then
+                    script_echo "E: clang não está apontando para o Yuki Clang!"
+                    script_echo "   Esperado: ${YUKI_DIR}/bin/clang"
+                    script_echo "   Encontrado: $CLANG_BIN"
+                    exit_script
+                fi
+                script_echo "I: clang -> $CLANG_BIN"
+            else
+                script_echo "E: Yuki Clang não encontrado, tentando baixar..."
+                add_deps
+            fi
+            ;;
     esac
 }
 
@@ -231,12 +282,12 @@ build_kernel_image() {
     script_echo "Building CosmicFresh Kernel For $DEVICE com $TOOLCHAIN_TYPE"
 
     case "$TOOLCHAIN_TYPE" in
-        GCC)     MAKE=("${MAKE_GCC[@]}") ;;
-        NEUTRON) MAKE=("${MAKE_CLANG[@]}") ;;
+        GCC)              MAKE=("${MAKE_GCC[@]}") ;;
+        NEUTRON|YUKI)      MAKE=("${MAKE_CLANG[@]}") ;;
     esac
 
     # Aplica patches de compatibilidade Clang antes de compilar
-    if [[ "$TOOLCHAIN_TYPE" == "NEUTRON" ]]; then
+    if [[ "$TOOLCHAIN_TYPE" == "NEUTRON" || "$TOOLCHAIN_TYPE" == "YUKI" ]]; then
         apply_clang_patches
     fi
 
