@@ -371,7 +371,7 @@ build_flashable_zip() {
     cp "$ORIGIN_DIR"/out/arch/arm64/boot/{Image.gz,dtbo.img} CosmicFresh/
     cp "$ORIGIN_DIR"/out/arch/arm64/boot/dts/qcom/sdmmagpie-odessa-base.dtb CosmicFresh/dtb
     cd "$ORIGIN_DIR"/CosmicFresh/ || exit
-    zip -r9 "CosmicFresh-R$KV-$FP_MODEL-$TOOLCHAIN_TYPE-NetHunter.zip" META-INF version anykernel.sh tools Image.gz dtb dtbo.img
+    zip -r9 "CosmicFresh-R$KV-$FP_MODEL-$TOOLCHAIN_TYPE-14-NetHunter.zip" META-INF version anykernel.sh tools Image.gz dtb dtbo.img
     rm -rf {Image.gz,dtb,dtbo.img}
     cd "$ORIGIN_DIR" || exit
 }
