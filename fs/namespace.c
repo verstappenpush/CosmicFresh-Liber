@@ -86,6 +86,30 @@ struct kobject *fs_kobj;
 EXPORT_SYMBOL_GPL(fs_kobj);
 
 /*
+ * This kernel tree still uses the legacy ida_pre_get()/ida_get_new_above()
+ * API (see mnt_alloc_id() below) rather than the newer ida_alloc_min()
+ * helper. Provide a small compatibility shim so callers that expect the
+ * newer API (e.g. the KSU/susfs mount-id allocation code) keep working
+ * unmodified.
+ */
+static int ida_alloc_min(struct ida *ida, unsigned int min, gfp_t gfp_mask)
+{
+	int id, res;
+
+retry:
+	if (!ida_pre_get(ida, gfp_mask))
+		return -ENOMEM;
+
+	res = ida_get_new_above(ida, min, &id);
+	if (res == -EAGAIN)
+		goto retry;
+	if (res)
+		return res;
+
+	return id;
+}
+
+/*
  * vfsmount lock may be taken for read to prevent changes to the
  * vfsmount hash, ie. during mountpoint lookups or walking back
  * up the tree.
@@ -1934,6 +1958,8 @@ static int can_umount(const struct path *path, int flags)
 {
 	struct mount *mnt = real_mount(path->mnt);
 
+	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
 	if (!may_mount())
 		return -EPERM;
 	if (path->dentry != path->mnt->mnt_root)
@@ -2048,24 +2074,6 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
 }
 
 #endif
-
-static int can_umount(const struct path *path, int flags)
- {
-	 struct mount *mnt = real_mount(path->mnt);
-	 if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
-		 return -EINVAL;
-	 if (!may_mount())
-		 return -EPERM;
-	 if (path->dentry != path->mnt->mnt_root)
-		 return -EINVAL;
-	 if (!check_mnt(mnt))
-		 return -EINVAL;
-	 if (mnt->mnt.mnt_flags & MNT_LOCKED)
-		 return -EINVAL;
-	 if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
-		 return -EPERM;
-	 return 0;
- }
 
 static bool is_mnt_ns_file(struct dentry *dentry)
 {
