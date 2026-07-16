@@ -1882,7 +1882,7 @@ int do_execve(struct filename *filename,
 #if defined(CONFIG_KSU)
 	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
-	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+	return __do_execve_file(AT_FDCWD, filename, argv, envp, 0, NULL);
 }
 
 int do_execveat(int fd, struct filename *filename,
@@ -1893,7 +1893,7 @@ int do_execveat(int fd, struct filename *filename,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 
-	return do_execveat_common(fd, filename, argv, envp, flags);
+	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1912,7 +1912,7 @@ static int compat_do_execve(struct filename *filename,
 #if defined(CONFIG_KSU) // 32-bit ksud and 32-on-64 support
 	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
-	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+	return __do_execve_file(AT_FDCWD, filename, argv, envp, 0, NULL);
 }
 
 static int compat_do_execveat(int fd, struct filename *filename,
@@ -1928,7 +1928,7 @@ static int compat_do_execveat(int fd, struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execveat_common(fd, filename, argv, envp, flags);
+	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
 }
 #endif
 
